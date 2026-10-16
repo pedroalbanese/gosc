@@ -188,30 +188,68 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 // trailing spaces, then splits on spaces
 //
 func tokenise(expr string) []string {
-	// Protect cell ranges (A2:A4) by replacing them with a placeholder,
-	// so the ':' is not broken by the tokenizer.
-	ranges := []string{}
-	expr = cell_range.ReplaceAllStringFunc(expr, func(m string) string {
-		ranges = append(ranges, m)
-		return fmt.Sprintf("\x00RANGE%d\x00", len(ranges)-1)
-	})
+	var tokens []string
+	i := 0
+	for i < len(expr) {
+		c := expr[i]
 
-	spaced := tokenize_regex.ReplaceAllString(expr, " ${1} ")
-	symbols := []string{"(", ")"}
-	for _, symbol := range symbols {
-		spaced = strings.Replace(spaced, symbol, fmt.Sprintf(" %s ", symbol), -1)
-	}
-	stripped := whitespace_rx.ReplaceAllString(strings.TrimSpace(spaced), "|")
-	tokens := strings.Split(stripped, "|")
-
-	// Restore the ranges
-	for i, tok := range tokens {
-		if strings.HasPrefix(tok, "\x00RANGE") && strings.HasSuffix(tok, "\x00") {
-			idxStr := strings.TrimSuffix(strings.TrimPrefix(tok, "\x00RANGE"), "\x00")
-			var idx int
-			fmt.Sscanf(idxStr, "%d", &idx)
-			tokens[i] = ranges[idx]
+		// Skip whitespace
+		if c == ' ' || c == '\t' {
+			i++
+			continue
 		}
+
+		// Cell range or cell address: starts with uppercase letter
+		if c >= 'A' && c <= 'Z' {
+			start := i
+			// letters
+			for i < len(expr) && expr[i] >= 'A' && expr[i] <= 'Z' {
+				i++
+			}
+			// digits
+			for i < len(expr) && expr[i] >= '0' && expr[i] <= '9' {
+				i++
+			}
+			// optional range: ':' followed by another cell address
+			if i < len(expr) && expr[i] == ':' {
+				i++
+				for i < len(expr) && expr[i] >= 'A' && expr[i] <= 'Z' {
+					i++
+				}
+				for i < len(expr) && expr[i] >= '0' && expr[i] <= '9' {
+					i++
+				}
+			}
+			tokens = append(tokens, expr[start:i])
+			continue
+		}
+
+		// Number
+		if c >= '0' && c <= '9' {
+			start := i
+			for i < len(expr) && ((expr[i] >= '0' && expr[i] <= '9') || expr[i] == '.') {
+				i++
+			}
+			tokens = append(tokens, expr[start:i])
+			continue
+		}
+
+		// ** operator
+		if c == '*' && i+1 < len(expr) && expr[i+1] == '*' {
+			tokens = append(tokens, "**")
+			i += 2
+			continue
+		}
+
+		// Single-character operators and parentheses
+		if strings.ContainsRune("-+*/<>()", rune(c)) {
+			tokens = append(tokens, string(c))
+			i++
+			continue
+		}
+
+		// Unknown character: skip
+		i++
 	}
 	return tokens
 }
