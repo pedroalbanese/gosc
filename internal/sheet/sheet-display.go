@@ -3,8 +3,8 @@ package sheet
 import (
 	"fmt"
 
-	"github.com/scrouthtv/gosc/internal/display"
-	"github.com/scrouthtv/gosc/internal/sheet/align"
+	"github.com/pedroalbanese/gosc/internal/display"
+	"github.com/pedroalbanese/gosc/internal/sheet/align"
 
 	"github.com/nsf/termbox-go"
 )
