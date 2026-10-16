@@ -2,11 +2,12 @@ package sheet
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 
-	"github.com/scrouthtv/gosc/internal/display"
-	"github.com/scrouthtv/gosc/internal/evaler"
-	"github.com/scrouthtv/gosc/internal/sheet/align"
+	"github.com/pedroalbanese/gosc/internal/display"
+	"github.com/pedroalbanese/gosc/internal/evaler"
+	"github.com/pedroalbanese/gosc/internal/sheet/align"
 )
 
 type Cell struct {
@@ -54,7 +55,9 @@ func (c *Cell) Copy(oldAddress, newAddress Address) *Cell {
 func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	postfix := evaler.GetPostfix(c.value)
 	for idx, token := range postfix {
-		if evaler.IsCellAddr(token) {
+		if evaler.IsCellRange(token) {
+			postfix[idx] = s.expandRange(token)
+		} else if evaler.IsCellAddr(token) {
 			refCellVal := ""
 			if cell, err := s.GetCell(Address(token)); err == nil {
 				refCellVal = cell.getDisplayValue(s, Address(token))
@@ -101,4 +104,44 @@ func (c *Cell) StatusBarVal() string {
 	} else {
 		return c.value
 	}
+}
+
+// expandRange expands a range like A2:A4 into the sum of the values
+// of all cells in the rectangular region.
+//
+// The result is returned as a string in a format that evaler can parse.
+func (s *Sheet) expandRange(rng string) string {
+	parts := strings.SplitN(rng, ":", 2)
+	if len(parts) != 2 {
+		return "0"
+	}
+	start := Address(parts[0])
+	end := Address(parts[1])
+
+	r1, c1 := start.RowCol()
+	r2, c2 := end.RowCol()
+
+	sum := new(big.Rat)
+	for r := r1; r <= r2; r++ {
+		for c := c1; c <= c2; c++ {
+			addr := NewAddress(r, c)
+			cell, err := s.GetCell(addr)
+			if err != nil || cell == nil {
+				continue
+			}
+			if cell.stringType {
+				// Strings count as zero in a numeric sum.
+				continue
+			}
+			valStr := cell.getDisplayValue(s, addr)
+			if valStr == "" {
+				continue
+			}
+			v := new(big.Rat)
+			if _, err := fmt.Sscan(valStr, v); err == nil {
+				sum.Add(sum, v)
+			}
+		}
+	}
+	return sum.FloatString(10)
 }
