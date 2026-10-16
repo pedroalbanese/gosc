@@ -19,6 +19,7 @@ var whitespace_rx = regexp.MustCompile(`\s+`)
 var fp_rx = regexp.MustCompile(`(\d+(?:\.\d+)?)`) // simple fp number
 var tokenize_regex = regexp.MustCompile(`([A-Z]*\d+(?:\.\d+)?)`)
 var cell_addr = regexp.MustCompile(`([A-Z]+\d+)`)
+var cell_range = regexp.MustCompile(`([A-Z]+\d+):([A-Z]+\d+)`)
 var operators = "-+**/<>"
 
 // prec returns the operator's precedence
@@ -48,9 +49,14 @@ func isOperand(token string) bool {
 	return fp_rx.MatchString(token)
 }
 
-// isCellAddr returns true if token is a cell address
+// IsCellAddr returns true if token is a cell address
 func IsCellAddr(token string) bool {
 	return cell_addr.MatchString(token)
+}
+
+// IsCellRange returns true if token is a cell range like A2:A4
+func IsCellRange(token string) bool {
+	return cell_range.MatchString(token)
 }
 
 // convert2postfix converts an infix expression to postfix
@@ -92,7 +98,7 @@ func convert2postfix(tokens []string) []string {
 				}
 			}
 
-		} else if isOperand(token) || IsCellAddr(token) {
+		} else if isOperand(token) || IsCellAddr(token) || IsCellRange(token) {
 			result = append(result, token)
 		}
 
@@ -106,7 +112,7 @@ func convert2postfix(tokens []string) []string {
 	return result
 }
 
-// evaluatePostfix takes a postfix expression and evaluates it
+// EvaluatePostfix takes a postfix expression and evaluates it
 func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 	var stack stack.Stack
 	result := new(big.Rat) // note: a new(big.Rat) has value "0/1" ie zero
@@ -160,6 +166,10 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 					stack.Push(new(big.Rat))
 				}
 			}
+		} else if IsCellRange(token) {
+			// Should have been expanded by the caller (sheet package).
+			// Treat as 0 if it wasn't.
+			stack.Push(new(big.Rat))
 		} else {
 			return nil, fmt.Errorf("unknown token %v", token)
 		}
@@ -178,13 +188,32 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 // trailing spaces, then splits on spaces
 //
 func tokenise(expr string) []string {
+	// Protect cell ranges (A2:A4) by replacing them with a placeholder,
+	// so the ':' is not broken by the tokenizer.
+	ranges := []string{}
+	expr = cell_range.ReplaceAllStringFunc(expr, func(m string) string {
+		ranges = append(ranges, m)
+		return fmt.Sprintf("\x00RANGE%d\x00", len(ranges)-1)
+	})
+
 	spaced := tokenize_regex.ReplaceAllString(expr, " ${1} ")
 	symbols := []string{"(", ")"}
 	for _, symbol := range symbols {
 		spaced = strings.Replace(spaced, symbol, fmt.Sprintf(" %s ", symbol), -1)
 	}
 	stripped := whitespace_rx.ReplaceAllString(strings.TrimSpace(spaced), "|")
-	return strings.Split(stripped, "|")
+	tokens := strings.Split(stripped, "|")
+
+	// Restore the ranges
+	for i, tok := range tokens {
+		if strings.HasPrefix(tok, "\x00RANGE") && strings.HasSuffix(tok, "\x00") {
+			idxStr := strings.TrimSuffix(strings.TrimPrefix(tok, "\x00RANGE"), "\x00")
+			var idx int
+			fmt.Sscanf(idxStr, "%d", &idx)
+			tokens[i] = ranges[idx]
+		}
+	}
+	return tokens
 }
 
 // Eval takes an infix string arithmetic expression, and evaluates it
@@ -218,7 +247,7 @@ func BigratToInt(bigrat *big.Rat) (int64, error) {
 	return strconv.ParseInt(float_string, 10, 64)
 }
 
-// BigratToInt converts a *big.Rat to a *big.Int (with truncation)
+// BigratToBigint converts a *big.Rat to a *big.Int (with truncation)
 func BigratToBigint(bigrat *big.Rat) *big.Int {
 	int_string := bigrat.FloatString(0)
 	bigint := new(big.Int)
