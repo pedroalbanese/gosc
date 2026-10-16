@@ -3,8 +3,9 @@ package sheet
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/scrouthtv/gosc/internal/evaler"
+	"github.com/pedroalbanese/gosc/internal/evaler"
 )
 
 const (
@@ -157,7 +158,18 @@ func (s *Sheet) SetCell(address Address, cell *Cell) {
 	if !cell.stringType {
 		postfix := evaler.GetPostfix(cell.value)
 		for _, token := range postfix {
-			if evaler.IsCellAddr(token) {
+			if evaler.IsCellRange(token) {
+				parts := strings.SplitN(token, ":", 2)
+				start := Address(parts[0])
+				end := Address(parts[1])
+				r1, c1 := start.RowCol()
+				r2, c2 := end.RowCol()
+				for r := r1; r <= r2; r++ {
+					for c := c1; c <= c2; c++ {
+						cell.forwardRefs[NewAddress(r, c)] = struct{}{}
+					}
+				}
+			} else if evaler.IsCellAddr(token) {
 				tokenAddr := Address(token)
 				cell.forwardRefs[tokenAddr] = struct{}{}
 			}
