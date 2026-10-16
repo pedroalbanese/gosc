@@ -1,17 +1,24 @@
-// csv2sc.go — Converts CSV files to the sc (Spreadsheet Calculator) format.
+// csv2sc.go — Converts CSV files to the sc (Spreadsheet Calculator) format,
+// and vice versa.
 //
 // Build:
 //   go build -ldflags="-s -w" -o csv2sc csv2sc.go
 //
 // Usage:
-//   csv2sc [options] [file.csv]
+//   csv2sc [options] [file]
 //
-// Options:
+// Options (CSV -> sc):
 //   -d CHAR     Field delimiter (default: ',')
 //   -r N        Starting row for the data (default: 0)
 //   -c N        Starting column for the data (default: 0)
 //   -H          Treat the first row as a header (default: true)
 //   -a ALIGN    Header alignment: left, right, center (default: center)
+//   -n          Suppress the comment header in the sc output
+//   -t          Force all fields as text (leftstring)
+//
+// Options (sc -> CSV):
+//   --csv       Convert an sc file back to CSV
+//
 //   -h          Show help
 //
 // Fields starting with '=' are converted to formulas (let). Example:
@@ -21,7 +28,8 @@
 //   csv2sc < data.csv > data.sc
 //   csv2sc -d '\t' data.tsv > data.sc
 //   csv2sc -a right data.csv > data.sc
-//   csv2sc -H=false data.csv > data.sc
+//   csv2sc -n -t data.csv > data.sc
+//   csv2sc --csv data.sc > data.csv
 
 package main
 
@@ -32,18 +40,23 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 func main() {
 	var (
-		delim    = flag.String("d", ",", "field delimiter (single character)")
-		startRow = flag.Int("r", 0, "starting row for the data")
-		startCol = flag.Int("c", 0, "starting column for the data")
-		header   = flag.Bool("H", true, "treat the first row as a header")
-		align    = flag.String("a", "center", "header alignment: left, right, center")
-		showHelp = flag.Bool("h", false, "show help")
+		delim      = flag.String("d", ",", "field delimiter (single character)")
+		startRow   = flag.Int("r", 0, "starting row for the data")
+		startCol   = flag.Int("c", 0, "starting column for the data")
+		header     = flag.Bool("H", true, "treat the first row as a header")
+		align      = flag.String("a", "center", "header alignment: left, right, center")
+		noComment  = flag.Bool("n", false, "suppress the comment header in the sc output")
+		forceText  = flag.Bool("t", false, "force all fields as text (leftstring)")
+		toCSV      = flag.Bool("csv", false, "convert an sc file back to CSV")
+		showHelp   = flag.Bool("h", false, "show help")
 	)
 
 	flag.Usage = usage
@@ -57,13 +70,12 @@ func main() {
 	// Validate alignment
 	switch *align {
 	case "left", "right", "center":
-		// ok
 	default:
 		fmt.Fprintf(os.Stderr, "csv2sc: invalid alignment %q (use left, right or center)\n", *align)
 		os.Exit(1)
 	}
 
-	// Resolve the delimiter: supports escaped sequences like "\t".
+	// Resolve the delimiter.
 	delimStr := *delim
 	if delimStr == `\t` {
 		delimStr = "\t"
@@ -74,7 +86,7 @@ func main() {
 	}
 	r := []rune(delimStr)[0]
 
-	// Determine the input source.
+	// Input source.
 	var input io.Reader = os.Stdin
 	if flag.NArg() > 0 {
 		f, err := os.Open(flag.Arg(0))
@@ -86,7 +98,15 @@ func main() {
 		input = f
 	}
 
-	if err := convert(input, os.Stdout, r, *startRow, *startCol, *header, *align); err != nil {
+	if *toCSV {
+		if err := scToCSV(input, os.Stdout, r); err != nil {
+			fmt.Fprintf(os.Stderr, "csv2sc: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := convert(input, os.Stdout, r, *startRow, *startCol, *header, *align, *noComment, *forceText); err != nil {
 		fmt.Fprintf(os.Stderr, "csv2sc: %v\n", err)
 		os.Exit(1)
 	}
@@ -94,16 +114,23 @@ func main() {
 
 // usage prints the help message.
 func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: csv2sc [options] [file.csv]
+	fmt.Fprintln(os.Stderr, `Usage: csv2sc [options] [file]
 
-Converts a CSV file into the sc (Spreadsheet Calculator) format.
+Converts a CSV file into the sc (Spreadsheet Calculator) format,
+or, with --csv, converts an sc file back to CSV.
 
-Options:
+Options (CSV -> sc):
   -d CHAR    Field delimiter (default: ','). Use '\t' for tab.
   -r N       Starting row for the data (default: 0).
   -c N       Starting column for the data (default: 0).
   -H         Treat the first row as a header (default: true).
   -a ALIGN   Header alignment: left, right, center (default: center).
+  -n         Suppress the comment header in the sc output.
+  -t         Force all fields as text (leftstring).
+
+Options (sc -> CSV):
+  --csv      Convert an sc file back to CSV.
+
   -h         Show this help.
 
 Fields starting with '=' are converted to formulas (let).
@@ -113,29 +140,28 @@ If no file is given, reads from standard input.
 Output is written to standard output.`)
 }
 
+// ===========================================================================
+// CSV -> sc
+// ===========================================================================
+
 // convert reads CSV from r and writes sc commands to w.
-//
-// The first row (if header is true) is treated as a header and
-// rendered with the chosen alignment (left, right, center).
-// Subsequent rows are data: numeric fields become "let",
-// non-numeric become "leftstring", and fields starting with '='
-// become formulas ("let" with the leading '=' stripped).
-func convert(r io.Reader, w io.Writer, delim rune, startRow, startCol int, header bool, align string) error {
+func convert(r io.Reader, w io.Writer, delim rune, startRow, startCol int, header bool, align string, noComment, forceText bool) error {
 	reader := csv.NewReader(r)
 	reader.Comma = delim
 	reader.LazyQuotes = true
-	reader.FieldsPerRecord = -1 // allow variable number of fields
+	reader.FieldsPerRecord = -1
 	reader.TrimLeadingSpace = true
 
 	bw := bufio.NewWriter(w)
 	defer bw.Flush()
 
-	// Standard header for sc files.
-	fmt.Fprintln(bw, "# This data file was generated by csv2sc.")
-	fmt.Fprintln(bw, "# You almost certainly shouldn't edit it.")
-	fmt.Fprintln(bw, "")
+	// Comment header (optional).
+	if !noComment {
+		fmt.Fprintln(bw, "# This data file was generated by csv2sc.")
+		fmt.Fprintln(bw, "# You almost certainly shouldn't edit it.")
+		fmt.Fprintln(bw, "")
+	}
 
-	// Choose the string command for the header.
 	headerCmd := "leftstring"
 	switch align {
 	case "right":
@@ -163,12 +189,15 @@ func convert(r io.Reader, w io.Writer, delim rune, startRow, startCol int, heade
 			addr := address(row, startCol+col)
 
 			if firstRow && header {
-				// Header row: always a string with the chosen alignment.
 				fmt.Fprintf(bw, "%s %s = \"%s\"\n", headerCmd, addr, escapeString(field))
 				continue
 			}
 
-			// Formula: field starts with '='.
+			if forceText {
+				fmt.Fprintf(bw, "leftstring %s = \"%s\"\n", addr, escapeString(field))
+				continue
+			}
+
 			if strings.HasPrefix(field, "=") {
 				formula := strings.TrimPrefix(field, "=")
 				fmt.Fprintf(bw, "let %s = %s\n", addr, formula)
@@ -186,24 +215,135 @@ func convert(r io.Reader, w io.Writer, delim rune, startRow, startCol int, heade
 		row++
 	}
 
-	// Move cursor to the first cell of the data.
 	first := address(startRow, startCol)
 	fmt.Fprintf(bw, "goto %s A0\n", first)
 
 	return nil
 }
 
-// isNumeric returns true if the string represents a valid number
-// (integer or floating point, possibly negative).
+// ===========================================================================
+// sc -> CSV
+// ===========================================================================
+
+// cellCmd is one parsed sc command.
+type cellCmd struct {
+	cmd   string // "let", "leftstring", "rightstring", "label"
+	addr  string
+	value string
+}
+
+var scCmdRx = regexp.MustCompile(`^(let|leftstring|rightstring|label)\s+([A-Z]+\d+)\s*=\s*(.*)$`)
+var scAddrRx = regexp.MustCompile(`^([A-Z]+)(\d+)$`)
+
+// scToCSV reads an sc file and writes CSV to w.
+func scToCSV(r io.Reader, w io.Writer, delim rune) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
+	var cmds []cellCmd
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		m := scCmdRx.FindStringSubmatch(line)
+		if m == nil {
+			// ignore goto, format, etc.
+			continue
+		}
+		cmd, addr, val := m[1], m[2], m[3]
+		// strip surrounding quotes for string commands
+		if cmd == "leftstring" || cmd == "rightstring" || cmd == "label" {
+			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+				val = val[1 : len(val)-1]
+				val = unescapeString(val)
+			}
+		} else if cmd == "let" {
+			// formula or number: keep as is, but prefix with '='
+			// if it's not a pure number.
+			if !isNumeric(val) {
+				val = "=" + val
+			}
+		}
+		cmds = append(cmds, cellCmd{cmd, addr, val})
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	if len(cmds) == 0 {
+		return nil
+	}
+
+	// Find max row and column.
+	maxRow, maxCol := 0, 0
+	type rc struct{ row, col int }
+	positions := make(map[rc]string)
+	for _, c := range cmds {
+		m := scAddrRx.FindStringSubmatch(c.addr)
+		if m == nil {
+			continue
+		}
+		colName := m[1]
+		row, _ := strconv.Atoi(m[2])
+		col := columnIndex(colName)
+		if row > maxRow {
+			maxRow = row
+		}
+		if col > maxCol {
+			maxCol = col
+		}
+		positions[rc{row, col}] = c.value
+	}
+
+	// Write CSV.
+	cw := csv.NewWriter(w)
+	cw.Comma = delim
+	defer cw.Flush()
+
+	for row := 0; row <= maxRow; row++ {
+		record := make([]string, maxCol+1)
+		for col := 0; col <= maxCol; col++ {
+			if v, ok := positions[rc{row, col}]; ok {
+				record[col] = v
+			}
+		}
+		if err := cw.Write(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// columnIndex converts a column name (A, B, ..., Z, AA, AB, ...) to a
+// zero-based index.
+func columnIndex(name string) int {
+	col := 0
+	for _, ch := range name {
+		col = col*26 + int(ch-'A'+1)
+	}
+	return col - 1
+}
+
+// unescapeString reverses the escaping done by escapeString.
+func unescapeString(s string) string {
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
+	return s
+}
+
+// ===========================================================================
+// Helpers
+// ===========================================================================
+
+// isNumeric returns true if the string represents a valid number.
 func isNumeric(s string) bool {
 	if s == "" {
 		return false
 	}
-	// Try integer first.
 	if _, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return true
 	}
-	// Try float.
 	if _, err := strconv.ParseFloat(s, 64); err == nil {
 		return true
 	}
@@ -218,16 +358,11 @@ func escapeString(s string) string {
 }
 
 // address builds an sc cell address from a row and column.
-//
-// Columns are letters A, B, ..., Z, AA, AB, ...
-// Rows are numbers starting at 0.
 func address(row, col int) string {
 	return columnName(col) + strconv.Itoa(row)
 }
 
 // columnName converts a zero-based column index to its letter representation.
-//
-// 0 -> A, 1 -> B, ..., 25 -> Z, 26 -> AA, 27 -> AB, ...
 func columnName(col int) string {
 	if col < 0 {
 		col = 0
@@ -242,3 +377,6 @@ func columnName(col int) string {
 	}
 	return name
 }
+
+// Silence unused import warning for sort if not used.
+var _ = sort.Strings
