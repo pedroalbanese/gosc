@@ -1,7 +1,7 @@
 Spreadsheet Calculator
 ========
 
-This is a text-based spreadsheet program compatible with [sc](http://www.ibiblio.org/pub/Linux/apps/financial/spreadsheet/sc-7.16.lsm) files. `sc` is a public domain curses-based speadsheet calculator program that has similar key bindings to vi and works on Unix-like OSs. 
+This is a text-based spreadsheet program compatible with [sc](http://www.ibiblio.org/pub/Linux/apps/financial/spreadsheet/sc-7.16.lsm) files. `sc` is a public domain curses-based speadsheet calculator program that has similar key bindings to vi and works on Unix-like OSs.  
 
 This version of `sc` is cross-platform, allowing it to view/edit sc files on a Windows machine.
 
