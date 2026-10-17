@@ -1,10 +1,10 @@
 Spreadsheet Calculator
 ========
-[![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/pedroalbanese/gosc/blob/master/LICENSE.md) 
-[![GoDoc](https://godoc.org/github.com/pedroalbanese/gosc?status.png)](http://godoc.org/github.com/pedroalbanese/gosc)
-[![GitHub downloads](https://img.shields.io/github/downloads/pedroalbanese/gosc/total.svg?logo=github&logoColor=white)](https://github.com/pedroalbanese/gosc/releases)
-[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pedroalbanese/gosc)](https://golang.org)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/gosc)](https://github.com/pedroalbanese/gosc/releases)
+[![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](https://github.com/pedroalbanese/sc/blob/master/LICENSE.md) 
+[![GoDoc](https://godoc.org/github.com/pedroalbanese/sc?status.png)](http://godoc.org/github.com/pedroalbanese/sc)
+[![GitHub downloads](https://img.shields.io/github/downloads/pedroalbanese/sc/total.svg?logo=github&logoColor=white)](https://github.com/pedroalbanese/sc/releases)
+[![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pedroalbanese/sc)](https://golang.org)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/sc)](https://github.com/pedroalbanese/sc/releases)
 
 This is a text-based spreadsheet program compatible with [sc](http://www.ibiblio.org/pub/Linux/apps/financial/spreadsheet/sc-7.16.lsm) files. `sc` is a public domain curses-based speadsheet calculator program that has similar key bindings to vi and works on Unix-like OSs.  
 
