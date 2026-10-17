@@ -1,5 +1,5 @@
-Copyright (c) 2013 Chris Howey
-Copyright (c) 2021 Leonard von Hagen
+Copyright (c) 2013 Chris Howey  
+Copyright (c) 2021 Leonard von Hagen  
 Copyright (c) 2026 Pedro F. Albanese
 
 Permission to use, copy, modify, and distribute this software for any
