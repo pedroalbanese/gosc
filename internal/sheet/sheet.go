@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pedroalbanese/gosc/internal/evaler"
+	"github.com/pedroalbanese/sc/internal/evaler"
 )
 
 const (

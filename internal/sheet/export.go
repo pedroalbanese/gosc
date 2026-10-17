@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pedroalbanese/gosc/internal/sheet/align"
+	"github.com/pedroalbanese/sc/internal/sheet/align"
 )
 
 func (s *Sheet) Export(path string) error {

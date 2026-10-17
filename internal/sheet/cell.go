@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/pedroalbanese/gosc/internal/display"
-	"github.com/pedroalbanese/gosc/internal/evaler"
-	"github.com/pedroalbanese/gosc/internal/sheet/align"
+	"github.com/pedroalbanese/sc/internal/display"
+	"github.com/pedroalbanese/sc/internal/evaler"
+	"github.com/pedroalbanese/sc/internal/sheet/align"
 )
 
 type Cell struct {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pedroalbanese/gosc/internal/sheet"
+	"github.com/pedroalbanese/sc/internal/sheet"
 
 	"github.com/nsf/termbox-go"
 )

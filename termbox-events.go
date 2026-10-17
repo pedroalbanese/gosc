@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pedroalbanese/gosc/internal/display"
-	"github.com/pedroalbanese/gosc/internal/sheet"
-	"github.com/pedroalbanese/gosc/internal/sheet/align"
+	"github.com/pedroalbanese/sc/internal/display"
+	"github.com/pedroalbanese/sc/internal/sheet"
+	"github.com/pedroalbanese/sc/internal/sheet/align"
 
 	"github.com/nsf/termbox-go"
 )

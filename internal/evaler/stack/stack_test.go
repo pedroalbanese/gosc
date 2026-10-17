@@ -16,7 +16,7 @@ package stack_test
 import (
 	"testing"
 
-	"github.com/pedroalbanese/gosc/internal/evaler/stack"
+	"github.com/pedroalbanese/sc/internal/evaler/stack"
 )
 
 func TestStack(t *testing.T) {
