@@ -24,6 +24,7 @@ This version of `sc` is cross-platform, allowing it to view/edit sc files on a W
 * Delete (clear) cell: x
 * Commands: (y)ank, (p)ut
 * Set output format for current column: f
+* Export in txt: W
 * Quit: q
 
 ## TODO
