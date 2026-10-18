@@ -20,6 +20,12 @@ type ColumnFormat struct {
 	ctype     int
 }
 
+// lastEdit stores the state of a single cell before the most recent change.
+type lastEdit struct {
+	address Address
+	cell    *Cell // nil means the cell was empty before the change
+}
+
 type Sheet struct {
 	Filename string
 
@@ -37,6 +43,9 @@ type Sheet struct {
 	displayRows, displayCols int
 
 	loading bool
+
+	// single-level undo
+	lastUndo *lastEdit
 }
 
 // Creates a new sheet and loads a sheet from filename if it exists.
@@ -136,11 +145,45 @@ func (s *Sheet) IncreaseColumnWidth(column string) {
 	s.display()
 }
 
+// PushUndo records the current state of a cell before it is modified.
+// Only one level of undo is kept: each new edit overwrites the previous one.
+func (s *Sheet) PushUndo(address Address) {
+	old, err := s.GetCell(address)
+	if err != nil {
+		old = nil
+	} else if old != nil {
+		old = old.Copy(address, address)
+	}
+	s.lastUndo = &lastEdit{address: address, cell: old}
+}
+
+// Undo reverts the most recent change.
+// Returns true if something was undone, false if there was nothing to undo.
+func (s *Sheet) Undo() bool {
+	if s.lastUndo == nil {
+		return false
+	}
+	entry := s.lastUndo
+	s.lastUndo = nil
+
+	if entry.cell == nil {
+		delete(s.data, entry.address)
+	} else {
+		s.data[entry.address] = entry.cell
+	}
+	s.display()
+	return true
+}
+
 // Removes the cell at the given address from a sheet.
 func (s *Sheet) ClearCell(address Address) {
+	if !s.loading {
+		s.PushUndo(address)
+	}
 	delete(s.data, address)
 
 	s.findMaximums(address)
+	s.display()
 }
 
 // Returns the cell at the given address.
@@ -155,6 +198,10 @@ func (s *Sheet) GetCell(address Address) (*Cell, error) {
 
 // Sets the address to the passed in cell. Previous cell data that exists is thrown away.
 func (s *Sheet) SetCell(address Address, cell *Cell) {
+	if !s.loading {
+		s.PushUndo(address)
+	}
+
 	if !cell.stringType {
 		postfix := evaler.GetPostfix(cell.value)
 		for _, token := range postfix {
