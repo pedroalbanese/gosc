@@ -16,6 +16,8 @@ This version of `sc` is cross-platform, allowing it to view/edit sc files on a W
 * Expressions (B23+E23*5) 
 * Export to file, as in sc.
 
+This release adds support for cell ranges (A1:A7).
+
 ## Normal Mode Commands
 
 * Movement: h, j, k, l
@@ -28,8 +30,6 @@ This version of `sc` is cross-platform, allowing it to view/edit sc files on a W
 * Goto: g
 * Undo: u
 * Quit: q
-
-This release adds support for cell ranges (A1:A7).
 
 ## Contribute
 **Use issues for everything**
