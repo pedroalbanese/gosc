@@ -25,11 +25,9 @@ This version of `sc` is cross-platform, allowing it to view/edit sc files on a W
 * Commands: (y)ank, (p)ut
 * Set output format for current column: f
 * Export in txt: W
+* Goto: g
+* Undo: u
 * Quit: q
-
-## TODO
-* Undo `u`
-* Goto `g`
 
 ## Contribute
 **Use issues for everything**
