@@ -10,6 +10,8 @@ This is a text-based spreadsheet program compatible with [sc](http://www.ibiblio
 
 This version of `sc` is cross-platform, allowing it to view/edit sc files on a Windows machine.
 
+`csv2sc` is a companion command-line utility that converts CSV files into the `sc` spreadsheet format and back. It handles headers with configurable alignment, detects numbers, strings, and formulas (fields starting with =), and can also export an `sc` file to CSV with formulas preserved or with computed values using `--calc`. It is written in pure Go and ships alongside sc in every release archive.
+
 ## Supported Features
 
 * Vi-like key movements
