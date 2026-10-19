@@ -16,6 +16,10 @@ type Cell struct {
 	alignment  align.Align
 
 	forwardRefs map[Address]struct{} // Cells that are required for any formula
+
+	// cached computed value (only for numeric cells)
+	cachedValue string
+	cacheValid  bool
 }
 
 // Creates a new cell.
@@ -25,6 +29,7 @@ func NewCell(value string, alignment align.Align, stringType bool) *Cell {
 		alignment:   alignment,
 		stringType:  stringType,
 		forwardRefs: make(map[Address]struct{}),
+		cacheValid:  false,
 	}
 }
 
@@ -53,6 +58,10 @@ func (c *Cell) Copy(oldAddress, newAddress Address) *Cell {
 // Cell is assumed not to be string type when this function is called.
 // For string type cells, simply use c.value.
 func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
+	if c.cacheValid {
+		return c.cachedValue
+	}
+
 	postfix := evaler.GetPostfix(c.value)
 	for idx, token := range postfix {
 		if evaler.IsCellRange(token) {
@@ -65,11 +74,15 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 			postfix[idx] = refCellVal
 		}
 	}
+
+	result := ""
 	if rat, err := evaler.EvaluatePostfix(postfix); err == nil {
-		return rat.FloatString(s.getPrecision(address))
-	} else {
-		return ""
+		result = rat.FloatString(s.getPrecision(address))
 	}
+
+	c.cachedValue = result
+	c.cacheValid = true
+	return result
 }
 
 // Displays cell value using termbox.
