@@ -169,10 +169,29 @@ func (s *Sheet) Undo() bool {
 	if entry.cell == nil {
 		delete(s.data, entry.address)
 	} else {
+		entry.cell.cacheValid = false
 		s.data[entry.address] = entry.cell
 	}
+	s.invalidateCache(entry.address)
 	s.display()
 	return true
+}
+
+// invalidateCache clears the cached value of the given cell and of
+// every cell that (transitively) depends on it.
+func (s *Sheet) invalidateCache(address Address) {
+	if cell, err := s.GetCell(address); err == nil && cell != nil {
+		cell.cacheValid = false
+	}
+
+	for addr, cell := range s.data {
+		if _, depends := cell.forwardRefs[address]; depends {
+			if cell.cacheValid {
+				cell.cacheValid = false
+				s.invalidateCache(addr)
+			}
+		}
+	}
 }
 
 // Removes the cell at the given address from a sheet.
@@ -181,8 +200,8 @@ func (s *Sheet) ClearCell(address Address) {
 		s.PushUndo(address)
 	}
 	delete(s.data, address)
-
 	s.findMaximums(address)
+	s.invalidateCache(address)
 	s.display()
 }
 
@@ -223,11 +242,12 @@ func (s *Sheet) SetCell(address Address, cell *Cell) {
 		}
 	}
 	s.data[address] = cell
-
 	s.setMaximums(address)
+	s.invalidateCache(address)
 
-	// Refresh the sheet
-	s.display()
+	if !s.loading {
+		s.display()
+	}
 }
 
 // Sets the max row and column with values in them to make clipboard actions possible.
