@@ -33,6 +33,12 @@ This release adds support for cell ranges (A1:A7).
 * Undo: u
 * Quit: q
 
+| Before | After |
+|--------|-------|
+| Freezing on cycles | `circle` instead of freezing |
+| Slow `GoTo` (cell by cell) | Instant `GoTo` |
+| Slow opening (48 redraws) | Fast opening (1 redraw) |
+
 ## Contribute
 **Use issues for everything**
 - You can help and get help by:
