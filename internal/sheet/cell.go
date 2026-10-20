@@ -56,17 +56,17 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	c.calculating = true
 	defer func() { c.calculating = false }()
 
+	// Register the current sheet so RangeExpander can access it.
+	prevSheet := currentSheet
+	currentSheet = s
+	defer func() { currentSheet = prevSheet }()
+
 	postfix := evaler.GetPostfix(c.value)
+
+	// Substitute cell addresses with their values. Ranges are left as
+	// tokens; the evaler expands them via RangeExpander.
 	for idx, token := range postfix {
-		if evaler.IsCellRange(token) {
-			v := s.expandRange(token)
-			if v == "circle" {
-				c.cachedValue = "circle"
-				c.cacheValid = true
-				return "circle"
-			}
-			postfix[idx] = v
-		} else if evaler.IsCellAddr(token) {
+		if evaler.IsCellAddr(token) {
 			refCellVal := "0"
 			if cell, err := s.GetCell(Address(token)); err == nil && cell != nil {
 				v := cell.getDisplayValue(s, Address(token))
@@ -90,6 +90,49 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	c.cachedValue = result
 	c.cacheValid = true
 	return result
+}
+
+// expandRangeList expands a range like A1:B3 into a list of cell values.
+// This is used by the evaler's RangeExpander.
+func (s *Sheet) expandRangeList(rng string) []string {
+	parts := strings.SplitN(rng, ":", 2)
+	if len(parts) != 2 {
+		return []string{"0"}
+	}
+	start := Address(parts[0])
+	end := Address(parts[1])
+	r1, c1 := start.RowCol()
+	r2, c2 := end.RowCol()
+
+	if r1 > r2 {
+		r1, r2 = r2, r1
+	}
+	if c1 > c2 {
+		c1, c2 = c2, c1
+	}
+
+	var vals []string
+	for r := r1; r <= r2; r++ {
+		for c := c1; c <= c2; c++ {
+			addr := NewAddress(r, c)
+			cell, err := s.GetCell(addr)
+			if err != nil || cell == nil || cell.stringType {
+				continue
+			}
+			v := cell.getDisplayValue(s, addr)
+			if v == "circle" {
+				return []string{"0"}
+			}
+			if v == "" {
+				v = "0"
+			}
+			vals = append(vals, v)
+		}
+	}
+	if len(vals) == 0 {
+		return []string{"0"}
+	}
+	return vals
 }
 
 func (c *Cell) display(s *Sheet, address Address, row, colStart, colEnd int, selected bool) {
@@ -120,6 +163,9 @@ func (c *Cell) StatusBarVal() string {
 	return c.value
 }
 
+// expandRange sums a range like A1:B3. Used only for formulas without
+// functions; when a function is present, the evaler expands the range
+// into individual values via RangeExpander.
 func (s *Sheet) expandRange(rng string) string {
 	parts := strings.SplitN(rng, ":", 2)
 	if len(parts) != 2 {
