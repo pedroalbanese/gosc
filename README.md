@@ -46,6 +46,7 @@ This release adds support for cell ranges (A1:A7).
 | Freezing on cycles | `circle` instead of freezing |
 | Slow `GoTo` (cell by cell) | Instant `GoTo` |
 | Slow opening (48 redraws) | Fast opening (1 redraw) |
+| `@avg`, `@max`, `@min` returning the range sum | `@avg`, `@max`, `@min` returning the correct aggregate value |
 
 ## Contribute
 **Use issues for everything**
