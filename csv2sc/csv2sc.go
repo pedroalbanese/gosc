@@ -25,6 +25,11 @@
 // Fields starting with '=' are converted to formulas (let). Example:
 //   =B2*C2   ->   let D2 = B2*C2
 //
+// Formulas in --calc mode support:
+//   - numbers, cell addresses (A1, B23), cell ranges (A1:A3)
+//   - operators + - * / ** and parentheses
+//   - @sum, @avg, @max, @min with one or more arguments (cells or ranges)
+//
 // Examples:
 //   csv2sc < data.csv > data.sc
 //   csv2sc -d '\t' data.tsv > data.sc
@@ -136,6 +141,11 @@ Options (sc -> CSV):
 Fields starting with '=' are converted to formulas (let).
 Example:  =B2*C2   becomes   let D2 = B2*C2
 
+Formulas in --calc mode support:
+  - numbers, cell addresses (A1, B23), cell ranges (A1:A3)
+  - operators + - * / ** and parentheses
+  - @sum, @avg, @max, @min with one or more arguments (cells or ranges)
+
 If no file is given, reads from standard input.
 Output is written to standard output.`)
 }
@@ -234,17 +244,12 @@ const (
 type cellCmd struct {
 	kind  cellKind
 	addr  string
-	value string // number, formula (no leading '='), or string content
+	value string
 }
 
 var scCmdRx = regexp.MustCompile(`^(let|leftstring|rightstring|label)\s+([A-Z]+\d+)\s*=\s*(.*)$`)
 var scAddrRx = regexp.MustCompile(`^([A-Z]+)(\d+)$`)
 
-// scToCSV reads an sc file and writes CSV to w.
-//
-// If calc is true, formulas are evaluated and the output contains
-// computed numeric values. Otherwise, formulas are output with a
-// leading '=' so they can be converted back.
 func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -270,7 +275,6 @@ func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 			continue
 		}
 
-		// string commands
 		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
 			val = val[1 : len(val)-1]
 			val = unescapeString(val)
@@ -285,7 +289,6 @@ func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 		return nil
 	}
 
-	// Build a map from address to cell for evaluation.
 	cells := make(map[string]*cellCmd)
 	maxRow, maxCol := 0, 0
 	for i := range cmds {
@@ -305,7 +308,6 @@ func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 		}
 	}
 
-	// Evaluate all formulas if requested.
 	var values map[string]string
 	if calc {
 		eval := &evaluator{cells: cells, cache: make(map[string]*big.Rat), visiting: make(map[string]bool)}
@@ -322,7 +324,6 @@ func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 		}
 	}
 
-	// Write CSV.
 	cw := csv.NewWriter(w)
 	cw.Comma = delim
 	defer cw.Flush()
@@ -369,8 +370,6 @@ func scToCSV(r io.Reader, w io.Writer, delim rune, calc bool) error {
 	return nil
 }
 
-// columnIndex converts a column name (A, B, ..., Z, AA, AB, ...) to a
-// zero-based index.
 func columnIndex(name string) int {
 	col := 0
 	for _, ch := range name {
@@ -395,7 +394,6 @@ type evaluator struct {
 	visiting map[string]bool
 }
 
-// evalCell evaluates the value of a cell given its address.
 func (e *evaluator) evalCell(addr string) (*big.Rat, error) {
 	if v, ok := e.cache[addr]; ok {
 		return v, nil
@@ -405,7 +403,6 @@ func (e *evaluator) evalCell(addr string) (*big.Rat, error) {
 	}
 	c, ok := e.cells[addr]
 	if !ok {
-		// empty cell = 0
 		r := new(big.Rat)
 		e.cache[addr] = r
 		return r, nil
@@ -436,32 +433,95 @@ func (e *evaluator) evalCell(addr string) (*big.Rat, error) {
 	return nil, fmt.Errorf("unknown cell kind")
 }
 
-// evalFormula evaluates a formula expression, returning the result.
-//
-// Supported syntax:
-//   - numbers (int/float)
-//   - cell addresses (A1, B23, ...)
-//   - ranges (A1:A3), which expand to the sum of their cells
-//   - operators + - * / ** and parentheses
 func (e *evaluator) evalFormula(expr string) (*big.Rat, error) {
 	tokens := tokenizeFormula(expr)
 	postfix := toPostfix(tokens)
 	return e.evalPostfix(postfix)
 }
 
+type value struct {
+	single *big.Rat
+	list   []*big.Rat
+}
+
+func newSingle(r *big.Rat) value { return value{single: r} }
+func newList(rs []*big.Rat) value { return value{list: rs} }
+
+func (v value) asList() []*big.Rat {
+	if v.list != nil {
+		return v.list
+	}
+	return []*big.Rat{v.single}
+}
+
+func (v value) asSingle() *big.Rat {
+	if v.single != nil {
+		return v.single
+	}
+	sum := new(big.Rat)
+	for _, r := range v.list {
+		sum.Add(sum, r)
+	}
+	return sum
+}
+
 // tokenizeFormula converts a formula string into a list of tokens.
+//
+// Functions (@sum, @avg, @max, @min) are tokenized as postfix: their
+// arguments are emitted first, then the function token.
 func tokenizeFormula(expr string) []string {
 	var tokens []string
 	i := 0
 	for i < len(expr) {
 		c := expr[i]
 
-		if c == ' ' || c == '\t' {
+		if c == ' ' || c == '\t' || c == ',' {
 			i++
 			continue
 		}
 
-		// Cell range or cell address
+		if c == '@' {
+			start := i
+			i++
+			for i < len(expr) && ((expr[i] >= 'a' && expr[i] <= 'z') || (expr[i] >= 'A' && expr[i] <= 'Z')) {
+				i++
+			}
+			fn := strings.ToLower(expr[start:i])
+
+			j := i
+			for j < len(expr) && (expr[j] == ' ' || expr[j] == '\t') {
+				j++
+			}
+
+			if j < len(expr) && expr[j] == '(' {
+				depth := 1
+				k := j + 1
+				argStart := k
+				argCount := 1
+				for k < len(expr) && depth > 0 {
+					switch expr[k] {
+					case '(':
+						depth++
+					case ')':
+						depth--
+					case ',':
+						if depth == 1 {
+							argCount++
+						}
+					}
+					k++
+				}
+				argsExpr := expr[argStart : k-1]
+				argTokens := tokenizeFormula(argsExpr)
+				tokens = append(tokens, argTokens...)
+				tokens = append(tokens, fmt.Sprintf("%s/%d", fn, argCount))
+				i = k
+			} else {
+				tokens = append(tokens, fn)
+			}
+			continue
+		}
+
 		if c >= 'A' && c <= 'Z' {
 			start := i
 			for i < len(expr) && expr[i] >= 'A' && expr[i] <= 'Z' {
@@ -483,7 +543,6 @@ func tokenizeFormula(expr string) []string {
 			continue
 		}
 
-		// Number
 		if c >= '0' && c <= '9' {
 			start := i
 			for i < len(expr) && ((expr[i] >= '0' && expr[i] <= '9') || expr[i] == '.') {
@@ -493,21 +552,18 @@ func tokenizeFormula(expr string) []string {
 			continue
 		}
 
-		// ** operator
 		if c == '*' && i+1 < len(expr) && expr[i+1] == '*' {
 			tokens = append(tokens, "**")
 			i += 2
 			continue
 		}
 
-		// Single-character operators and parentheses
 		if strings.ContainsRune("-+*/()", rune(c)) {
 			tokens = append(tokens, string(c))
 			i++
 			continue
 		}
 
-		// Unknown character: skip
 		i++
 	}
 	return tokens
@@ -515,6 +571,13 @@ func tokenizeFormula(expr string) []string {
 
 func isOperator(tok string) bool {
 	return tok == "+" || tok == "-" || tok == "*" || tok == "/" || tok == "**"
+}
+
+func isFunction(tok string) bool {
+	return strings.HasPrefix(tok, "@sum/") ||
+		strings.HasPrefix(tok, "@avg/") ||
+		strings.HasPrefix(tok, "@max/") ||
+		strings.HasPrefix(tok, "@min/")
 }
 
 func prec(op string) int {
@@ -529,12 +592,15 @@ func prec(op string) int {
 	return 0
 }
 
-// toPostfix converts infix tokens to postfix using the shunting-yard algorithm.
 func toPostfix(tokens []string) []string {
 	var out []string
 	var ops []string
 
 	for _, tok := range tokens {
+		if isFunction(tok) {
+			out = append(out, tok)
+			continue
+		}
 		if isOperator(tok) {
 			for len(ops) > 0 && ops[len(ops)-1] != "(" && prec(ops[len(ops)-1]) >= prec(tok) {
 				out = append(out, ops[len(ops)-1])
@@ -553,11 +619,10 @@ func toPostfix(tokens []string) []string {
 				ops = ops[:len(ops)-1]
 			}
 			if len(ops) > 0 {
-				ops = ops[:len(ops)-1] // pop "("
+				ops = ops[:len(ops)-1]
 			}
 			continue
 		}
-		// operand
 		out = append(out, tok)
 	}
 
@@ -568,16 +633,41 @@ func toPostfix(tokens []string) []string {
 	return out
 }
 
-// evalPostfix evaluates a postfix expression.
 func (e *evaluator) evalPostfix(postfix []string) (*big.Rat, error) {
-	var stack []*big.Rat
+	var stack []value
 	for _, tok := range postfix {
+		if isFunction(tok) {
+			parts := strings.SplitN(tok, "/", 2)
+			fn := parts[0]
+			n := 1
+			if len(parts) == 2 {
+				n, _ = strconv.Atoi(parts[1])
+			}
+			if len(stack) < n {
+				return nil, fmt.Errorf("function %s needs %d arguments, got %d", fn, n, len(stack))
+			}
+			args := stack[len(stack)-n:]
+			stack = stack[:len(stack)-n]
+
+			var nums []*big.Rat
+			for _, a := range args {
+				nums = append(nums, a.asList()...)
+			}
+
+			val, err := applyFunction(fn, nums)
+			if err != nil {
+				return nil, err
+			}
+			stack = append(stack, newSingle(val))
+			continue
+		}
+
 		if isOperator(tok) {
 			if len(stack) < 2 {
 				return nil, fmt.Errorf("malformed expression")
 			}
-			op2 := stack[len(stack)-1]
-			op1 := stack[len(stack)-2]
+			op2 := stack[len(stack)-1].asSingle()
+			op1 := stack[len(stack)-2].asSingle()
 			stack = stack[:len(stack)-2]
 			r := new(big.Rat)
 			switch tok {
@@ -597,46 +687,79 @@ func (e *evaluator) evalPostfix(postfix []string) (*big.Rat, error) {
 				f2, _ := op2.Float64()
 				r.SetFloat64(pow(f1, f2))
 			}
-			stack = append(stack, r)
+			stack = append(stack, newSingle(r))
 			continue
 		}
 
-		// Cell range?
 		if strings.Contains(tok, ":") {
-			val, err := e.evalRange(tok)
+			val, err := e.evalRangeList(tok)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, val)
+			stack = append(stack, newList(val))
 			continue
 		}
 
-		// Cell address?
 		if scAddrRx.MatchString(tok) {
 			val, err := e.evalCell(tok)
 			if err != nil {
 				return nil, err
 			}
-			stack = append(stack, val)
+			stack = append(stack, newSingle(val))
 			continue
 		}
 
-		// Number
 		r := new(big.Rat)
 		if _, err := fmt.Sscan(tok, r); err != nil {
 			return nil, fmt.Errorf("unknown token %q", tok)
 		}
-		stack = append(stack, r)
+		stack = append(stack, newSingle(r))
 	}
 
 	if len(stack) != 1 {
 		return nil, fmt.Errorf("malformed expression")
 	}
-	return stack[0], nil
+	return stack[0].asSingle(), nil
 }
 
-// evalRange expands a range like A2:A4 and sums its values.
-func (e *evaluator) evalRange(rng string) (*big.Rat, error) {
+func applyFunction(fn string, args []*big.Rat) (*big.Rat, error) {
+	if len(args) == 0 {
+		return new(big.Rat), nil
+	}
+	switch fn {
+	case "@sum":
+		sum := new(big.Rat)
+		for _, v := range args {
+			sum.Add(sum, v)
+		}
+		return sum, nil
+	case "@avg":
+		sum := new(big.Rat)
+		for _, v := range args {
+			sum.Add(sum, v)
+		}
+		return sum.Quo(sum, big.NewRat(int64(len(args)), 1)), nil
+	case "@max":
+		max := args[0]
+		for _, v := range args[1:] {
+			if v.Cmp(max) > 0 {
+				max = v
+			}
+		}
+		return max, nil
+	case "@min":
+		min := args[0]
+		for _, v := range args[1:] {
+			if v.Cmp(min) < 0 {
+				min = v
+			}
+		}
+		return min, nil
+	}
+	return nil, fmt.Errorf("unknown function %s", fn)
+}
+
+func (e *evaluator) evalRangeList(rng string) ([]*big.Rat, error) {
 	parts := strings.SplitN(rng, ":", 2)
 	if len(parts) != 2 {
 		return nil, fmt.Errorf("invalid range %q", rng)
@@ -658,7 +781,7 @@ func (e *evaluator) evalRange(rng string) (*big.Rat, error) {
 		c1, c2 = c2, c1
 	}
 
-	sum := new(big.Rat)
+	var values []*big.Rat
 	for row := r1; row <= r2; row++ {
 		for col := c1; col <= c2; col++ {
 			addr := columnName(col) + strconv.Itoa(row)
@@ -666,13 +789,12 @@ func (e *evaluator) evalRange(rng string) (*big.Rat, error) {
 			if err != nil {
 				return nil, err
 			}
-			sum.Add(sum, v)
+			values = append(values, v)
 		}
 	}
-	return sum, nil
+	return values, nil
 }
 
-// pow computes base^exp using float64.
 func pow(base, exp float64) float64 {
 	r := 1.0
 	n := int(exp)
