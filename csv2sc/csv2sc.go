@@ -37,7 +37,6 @@
 //   csv2sc -n -t data.csv > data.sc
 //   csv2sc --csv data.sc > data.csv
 //   csv2sc --csv --calc data.sc > computed.csv
-
 package main
 
 import (
