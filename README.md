@@ -32,6 +32,14 @@ This release adds support for cell ranges (A1:A7).
 * Goto: g
 * Undo: u
 * Quit: q
+## Bug Fixes and Improvements
+
+### Added
+- **Cell ranges:** support for ranges such as `A1:A7` in formulas (e.g., `A1:A7*2`, `B1:B3+C1:C3`).
+- **Undo:** press `u` to revert the most recent cell change (single-level undo).
+- **GoTo:** press `g`, type an address (e.g., `C5`), and press Enter to jump directly to that cell.
+
+### Fixed
 
 | Before | After |
 |--------|-------|
