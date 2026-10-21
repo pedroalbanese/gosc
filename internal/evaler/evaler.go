@@ -173,6 +173,12 @@ func expandRanges(postfix []string) []string {
 
 // EvaluatePostfix takes a postfix expression and evaluates it.
 func EvaluatePostfix(postfix []string) (*big.Rat, error) {
+	// Empty expression: return an error, so the caller can display an
+	// empty cell instead of "0.00".
+	if len(postfix) == 0 {
+		return nil, fmt.Errorf("empty expression")
+	}
+
 	postfix = expandRanges(postfix)
 
 	var stack []value
@@ -222,8 +228,7 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 		} else if IsFunction(token) {
 			parts := strings.SplitN(token, "/", 2)
 			fn := parts[0]
-			// The argument count is implicit: a function consumes all values
-			// currently on the stack (because ranges expand into multiple values).
+			// Functions consume all values currently on the stack.
 			var nums []*big.Rat
 			for _, v := range stack {
 				nums = append(nums, v.asList()...)
@@ -237,7 +242,6 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 			stack = append(stack, newSingle(val))
 
 		} else if IsCellAddr(token) {
-			// Should have been expanded by the caller. Treat as 0.
 			stack = append(stack, newSingle(new(big.Rat)))
 
 		} else {
@@ -245,10 +249,18 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 		}
 	}
 
-	if len(stack) != 1 {
-		return nil, fmt.Errorf("malformed expression")
+	if len(stack) == 0 {
+		return nil, fmt.Errorf("empty stack")
 	}
-	return stack[0].asSingle(), nil
+
+	// Sum all remaining values on the stack. This handles the case
+	// where a range expands into multiple values without an operator
+	// to consume them (e.g., "D1:D3" alone in a cell).
+	sum := new(big.Rat)
+	for _, v := range stack {
+		sum.Add(sum, v.asSingle())
+	}
+	return sum, nil
 }
 
 // applyFunction applies @sum, @avg, @max or @min to the given arguments.
