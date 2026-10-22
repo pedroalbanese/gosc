@@ -70,13 +70,21 @@ func IsFunction(token string) bool {
 		strings.HasPrefix(token, "@min/")
 }
 
-// convert2postfix converts an infix expression to postfix
+// convert2postfix converts an infix expression to postfix.
+//
+// The "<fn>" marker is emitted directly to the output, and the
+// function token is emitted before any pending operators are popped.
+// This ensures that the function's arguments are delimited by the
+// "<fn>" marker and the function token itself.
 func convert2postfix(tokens []string) []string {
 	var stack stack.Stack
 	var result []string
 	for _, token := range tokens {
 
-		if isOperator(token) {
+		if token == "<fn>" {
+			result = append(result, "<fn>")
+
+		} else if isOperator(token) {
 
 		OPERATOR:
 			for {
@@ -104,15 +112,25 @@ func convert2postfix(tokens []string) []string {
 					pop, _ := stack.Pop()
 					result = append(result, pop.(string))
 				} else {
-					stack.Pop() // pop off "("
+					stack.Pop()
 					break PAREN
 				}
 			}
 
-		} else if isOperand(token) || IsCellAddr(token) || IsCellRange(token) {
-			result = append(result, token)
-
 		} else if IsFunction(token) {
+			// Emit the function first, then pop pending operators.
+			result = append(result, token)
+			for {
+				top, err := stack.Top()
+				if err == nil && top != "(" {
+					pop, _ := stack.Pop()
+					result = append(result, pop.(string))
+				} else {
+					break
+				}
+			}
+
+		} else if isOperand(token) || IsCellAddr(token) || IsCellRange(token) {
 			result = append(result, token)
 		}
 
@@ -154,16 +172,29 @@ func (v value) asSingle() *big.Rat {
 	return sum
 }
 
-// expandRanges replaces every range token in the postfix with the list
-// of values returned by RangeExpander.
+// expandRanges replaces every range token in the postfix with either
+// a single summed value (if the range is not an argument to a function)
+// or a list of values (if it is).
 func expandRanges(postfix []string) []string {
 	if RangeExpander == nil {
 		return postfix
 	}
 	var out []string
-	for _, tok := range postfix {
+	for i, tok := range postfix {
 		if IsCellRange(tok) {
-			out = append(out, RangeExpander(tok)...)
+			isArg := i+1 < len(postfix) && IsFunction(postfix[i+1])
+			if isArg {
+				out = append(out, RangeExpander(tok)...)
+			} else {
+				sum := new(big.Rat)
+				for _, v := range RangeExpander(tok) {
+					r := new(big.Rat)
+					if _, err := fmt.Sscan(v, r); err == nil {
+						sum.Add(sum, r)
+					}
+				}
+				out = append(out, sum.FloatString(10))
+			}
 		} else {
 			out = append(out, tok)
 		}
@@ -173,8 +204,6 @@ func expandRanges(postfix []string) []string {
 
 // EvaluatePostfix takes a postfix expression and evaluates it.
 func EvaluatePostfix(postfix []string) (*big.Rat, error) {
-	// Empty expression: return an error, so the caller can display an
-	// empty cell instead of "0.00".
 	if len(postfix) == 0 {
 		return nil, fmt.Errorf("empty expression")
 	}
@@ -183,6 +212,11 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 
 	var stack []value
 	for _, token := range postfix {
+		if token == "<fn>" {
+			stack = append(stack, value{})
+			continue
+		}
+
 		if isOperand(token) {
 			r := new(big.Rat)
 			if _, err := fmt.Sscan(token, r); err != nil {
@@ -228,14 +262,29 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 		} else if IsFunction(token) {
 			parts := strings.SplitN(token, "/", 2)
 			fn := parts[0]
-			// Functions consume all values currently on the stack.
-			var nums []*big.Rat
-			for _, v := range stack {
-				nums = append(nums, v.asList()...)
-			}
-			stack = nil
 
-			val, err := applyFunction(fn, nums)
+			markerIdx := -1
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].single == nil && stack[i].list == nil {
+					markerIdx = i
+					break
+				}
+			}
+
+			var args []*big.Rat
+			if markerIdx >= 0 {
+				for _, v := range stack[markerIdx+1:] {
+					args = append(args, v.asList()...)
+				}
+				stack = stack[:markerIdx]
+			} else {
+				for _, v := range stack {
+					args = append(args, v.asList()...)
+				}
+				stack = nil
+			}
+
+			val, err := applyFunction(fn, args)
 			if err != nil {
 				return nil, err
 			}
@@ -249,13 +298,18 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 		}
 	}
 
+	var filtered []value
+	for _, v := range stack {
+		if v.single != nil || v.list != nil {
+			filtered = append(filtered, v)
+		}
+	}
+	stack = filtered
+
 	if len(stack) == 0 {
 		return nil, fmt.Errorf("empty stack")
 	}
 
-	// Sum all remaining values on the stack. This handles the case
-	// where a range expands into multiple values without an operator
-	// to consume them (e.g., "D1:D3" alone in a cell).
 	sum := new(big.Rat)
 	for _, v := range stack {
 		sum.Add(sum, v.asSingle())
@@ -346,6 +400,7 @@ func tokenise(expr string) []string {
 				}
 				argsExpr := expr[argStart : k-1]
 				argTokens := tokenise(argsExpr)
+				tokens = append(tokens, "<fn>")
 				tokens = append(tokens, argTokens...)
 				tokens = append(tokens, fmt.Sprintf("%s/%d", fn, argCount))
 				i = k
