@@ -12,6 +12,8 @@ const (
 	initial_COLUMN_WIDTH     = 10
 	initial_COLUMN_PRECISION = 2
 	initial_COLUMN_TYPE      = 0
+
+	maxUndo = 100
 )
 
 // currentSheet is set by getDisplayValue so RangeExpander can access
@@ -33,9 +35,10 @@ type ColumnFormat struct {
 	ctype     int
 }
 
+// lastEdit stores the state of a single cell before a change.
 type lastEdit struct {
 	address Address
-	cell    *Cell
+	cell    *Cell // nil means the cell was empty before the change
 }
 
 type Sheet struct {
@@ -50,26 +53,35 @@ type Sheet struct {
 
 	clipboardRangeStart, clipboardRangeEnd Address
 
+	// display window
 	startRow, startCol       int
 	displayRows, displayCols int
 
 	loading bool
 
-	lastUndo *lastEdit
+	// undo stack (most recent at the end)
+	undoStack []lastEdit
 }
 
+// NewSheet creates a new sheet and loads it from filename if it exists.
 func NewSheet(filename string) Sheet {
 	s := Sheet{Filename: filename, SelectedCell: "A0",
 		columnFormats: make(map[string]ColumnFormat), data: make(map[Address]*Cell),
 		maxRowForColumn: make(map[int]int), maxColumnForRow: make(map[int]int)}
 
+	// Run display to get the row and column height of display set inside of sheet.
 	s.display()
+
+	// Load values into sheet and move to selected cell
 	s.Load()
+
+	// Display loaded sheet
 	s.display()
 
 	return s
 }
 
+// getPrecision returns the precision to use to display a number.
 func (s *Sheet) getPrecision(address Address) int {
 	if cFormat, found := s.columnFormats[address.ColumnHeader()]; found {
 		return cFormat.precision
@@ -77,6 +89,7 @@ func (s *Sheet) getPrecision(address Address) int {
 	return initial_COLUMN_PRECISION
 }
 
+// DecreaseColumnPrecision decreases column precision.
 func (s *Sheet) DecreaseColumnPrecision(column string) {
 	if cFormat, found := s.columnFormats[column]; found {
 		cFormat.precision--
@@ -90,6 +103,7 @@ func (s *Sheet) DecreaseColumnPrecision(column string) {
 	s.display()
 }
 
+// IncreaseColumnPrecision increases column precision.
 func (s *Sheet) IncreaseColumnPrecision(column string) {
 	if cFormat, found := s.columnFormats[column]; found {
 		cFormat.precision++
@@ -100,6 +114,7 @@ func (s *Sheet) IncreaseColumnPrecision(column string) {
 	s.display()
 }
 
+// DisplayFormat returns the display format string for a column.
 func (s *Sheet) DisplayFormat(address Address) string {
 	if cFormat, found := s.columnFormats[address.ColumnHeader()]; found {
 		return fmt.Sprintf("%d %d %d", cFormat.width, cFormat.precision, cFormat.ctype)
@@ -107,6 +122,7 @@ func (s *Sheet) DisplayFormat(address Address) string {
 	return fmt.Sprintf("%d %d %d", initial_COLUMN_WIDTH, initial_COLUMN_PRECISION, initial_COLUMN_TYPE)
 }
 
+// getColumnWidth returns the display width of the column in characters.
 func (s *Sheet) getColumnWidth(column string) int {
 	if cFormat, found := s.columnFormats[column]; found {
 		return cFormat.width
@@ -115,6 +131,7 @@ func (s *Sheet) getColumnWidth(column string) int {
 	return initial_COLUMN_WIDTH
 }
 
+// DecreaseColumnWidth decreases column width.
 func (s *Sheet) DecreaseColumnWidth(column string) {
 	if cFormat, found := s.columnFormats[column]; found {
 		cFormat.width--
@@ -128,6 +145,7 @@ func (s *Sheet) DecreaseColumnWidth(column string) {
 	s.display()
 }
 
+// IncreaseColumnWidth increases column width.
 func (s *Sheet) IncreaseColumnWidth(column string) {
 	if cFormat, found := s.columnFormats[column]; found {
 		cFormat.width++
@@ -138,6 +156,8 @@ func (s *Sheet) IncreaseColumnWidth(column string) {
 	s.display()
 }
 
+// PushUndo records the current state of a cell before it is modified.
+// The undo stack is limited to maxUndo entries.
 func (s *Sheet) PushUndo(address Address) {
 	old, err := s.GetCell(address)
 	if err != nil {
@@ -145,15 +165,21 @@ func (s *Sheet) PushUndo(address Address) {
 	} else if old != nil {
 		old = old.Copy(address, address)
 	}
-	s.lastUndo = &lastEdit{address: address, cell: old}
+	s.undoStack = append(s.undoStack, lastEdit{address: address, cell: old})
+	if len(s.undoStack) > maxUndo {
+		s.undoStack = s.undoStack[1:]
+	}
 }
 
+// Undo reverts the most recent change.
+// Returns true if something was undone, false if there was nothing to undo.
 func (s *Sheet) Undo() bool {
-	if s.lastUndo == nil {
+	if len(s.undoStack) == 0 {
 		return false
 	}
-	entry := s.lastUndo
-	s.lastUndo = nil
+	entry := s.undoStack[len(s.undoStack)-1]
+	s.undoStack = s.undoStack[:len(s.undoStack)-1]
+
 	if entry.cell == nil {
 		delete(s.data, entry.address)
 	} else {
@@ -165,10 +191,13 @@ func (s *Sheet) Undo() bool {
 	return true
 }
 
+// invalidateCache clears the cached value of the given cell and of
+// every cell that (transitively) depends on it.
 func (s *Sheet) invalidateCache(address Address) {
 	if cell, err := s.GetCell(address); err == nil && cell != nil {
 		cell.cacheValid = false
 	}
+
 	for addr, cell := range s.data {
 		if _, depends := cell.forwardRefs[address]; depends {
 			if cell.cacheValid {
@@ -179,6 +208,7 @@ func (s *Sheet) invalidateCache(address Address) {
 	}
 }
 
+// ClearCell removes the cell at the given address from a sheet.
 func (s *Sheet) ClearCell(address Address) {
 	if !s.loading {
 		s.PushUndo(address)
@@ -189,6 +219,7 @@ func (s *Sheet) ClearCell(address Address) {
 	s.display()
 }
 
+// GetCell returns the cell at the given address.
 func (s *Sheet) GetCell(address Address) (*Cell, error) {
 	if cell, found := s.data[address]; found {
 		return cell, nil
@@ -198,10 +229,13 @@ func (s *Sheet) GetCell(address Address) (*Cell, error) {
 	return nil, &ErrCellNotFound{address}
 }
 
+// SetCell sets the address to the passed in cell. Previous cell data
+// that exists is thrown away.
 func (s *Sheet) SetCell(address Address, cell *Cell) {
 	if !s.loading {
 		s.PushUndo(address)
 	}
+
 	if !cell.stringType {
 		postfix := evaler.GetPostfix(cell.value)
 		for _, token := range postfix {
@@ -224,24 +258,36 @@ func (s *Sheet) SetCell(address Address, cell *Cell) {
 	s.data[address] = cell
 	s.setMaximums(address)
 	s.invalidateCache(address)
+
 	if !s.loading {
 		s.display()
 	}
 }
 
+// setMaximums sets the max row and column with values in them to
+// make clipboard actions possible.
 func (s *Sheet) setMaximums(address Address) {
 	row, col := address.RowCol()
-	if row > s.maxRowForColumn[col] {
+
+	currRowMax := s.maxRowForColumn[col]
+	if row > currRowMax {
 		s.maxRowForColumn[col] = row
 	}
-	if col > s.maxColumnForRow[row] {
+
+	currColMax := s.maxColumnForRow[row]
+	if col > currColMax {
 		s.maxColumnForRow[row] = col
 	}
 }
 
+// findMaximums finds the max row and column with values in them to
+// make clipboard actions possible.
 func (s *Sheet) findMaximums(address Address) {
 	row, column := address.RowCol()
-	if column == s.maxColumnForRow[row] {
+
+	currColMax := s.maxColumnForRow[row]
+	if column == currColMax {
+		// Find lower column used on row
 		delete(s.maxColumnForRow, row)
 		for colIdx := column; colIdx >= 0; colIdx-- {
 			if _, found := s.data[NewAddress(row, colIdx)]; found {
@@ -249,7 +295,10 @@ func (s *Sheet) findMaximums(address Address) {
 			}
 		}
 	}
-	if row == s.maxRowForColumn[column] {
+
+	currRowMax := s.maxRowForColumn[column]
+	if row == currRowMax {
+		// Find lower row used for column
 		delete(s.maxRowForColumn, column)
 		for rowIdx := row; rowIdx >= 0; rowIdx-- {
 			if _, found := s.data[NewAddress(rowIdx, column)]; found {
