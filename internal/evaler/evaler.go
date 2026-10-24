@@ -25,6 +25,13 @@ var operators = "-+**/<>"
 // "B1:D1" into a list of numeric strings.
 var RangeExpander func(rng string) []string
 
+// ErrRef is returned when a formula references @ERR directly.
+var ErrRef = fmt.Errorf("error reference")
+
+// ErrInvalid is returned when a formula is invalid for other reasons
+// (e.g., division by zero, or @ERR used as an argument to a function).
+var ErrInvalid = fmt.Errorf("invalid expression")
+
 // prec returns the operator's precedence
 func prec(op string) (result int) {
 	if op == "-" || op == "+" {
@@ -71,11 +78,6 @@ func IsFunction(token string) bool {
 }
 
 // convert2postfix converts an infix expression to postfix.
-//
-// The "<fn>" marker is emitted directly to the output, and the
-// function token is emitted before any pending operators are popped.
-// This ensures that the function's arguments are delimited by the
-// "<fn>" marker and the function token itself.
 func convert2postfix(tokens []string) []string {
 	var stack stack.Stack
 	var result []string
@@ -83,6 +85,9 @@ func convert2postfix(tokens []string) []string {
 
 		if token == "<fn>" {
 			result = append(result, "<fn>")
+
+		} else if token == "@ERR" {
+			result = append(result, "@ERR")
 
 		} else if isOperator(token) {
 
@@ -118,7 +123,6 @@ func convert2postfix(tokens []string) []string {
 			}
 
 		} else if IsFunction(token) {
-			// Emit the function first, then pop pending operators.
 			result = append(result, token)
 			for {
 				top, err := stack.Top()
@@ -217,6 +221,21 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 			continue
 		}
 
+		if token == "@ERR" {
+			// Check if we are inside a function (there's a "<fn>" marker on the stack).
+			insideFn := false
+			for _, v := range stack {
+				if v.single == nil && v.list == nil {
+					insideFn = true
+					break
+				}
+			}
+			if insideFn {
+				return nil, ErrInvalid
+			}
+			return nil, ErrRef
+		}
+
 		if isOperand(token) {
 			r := new(big.Rat)
 			if _, err := fmt.Sscan(token, r); err != nil {
@@ -241,7 +260,7 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 				r.Mul(op1, op2)
 			case "/":
 				if op2.Sign() == 0 {
-					return nil, fmt.Errorf("division by zero")
+					return nil, ErrInvalid
 				}
 				r.Quo(op1, op2)
 			case "+":
@@ -294,7 +313,7 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 			stack = append(stack, newSingle(new(big.Rat)))
 
 		} else {
-			return nil, fmt.Errorf("unknown token %v", token)
+			return nil, ErrInvalid
 		}
 	}
 
@@ -307,7 +326,7 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 	stack = filtered
 
 	if len(stack) == 0 {
-		return nil, fmt.Errorf("empty stack")
+		return nil, ErrInvalid
 	}
 
 	sum := new(big.Rat)
@@ -374,6 +393,11 @@ func tokenise(expr string) []string {
 				i++
 			}
 			fn := strings.ToLower(expr[start:i])
+
+			if fn == "@err" {
+				tokens = append(tokens, "@ERR")
+				continue
+			}
 
 			j := i
 			for j < len(expr) && (expr[j] == ' ' || expr[j] == '\t') {
