@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	
+
 	"github.com/pedroalbanese/sc/internal/display"
 	"github.com/pedroalbanese/sc/internal/sheet"
 	"github.com/pedroalbanese/sc/internal/sheet/align"
@@ -24,6 +24,7 @@ const (
 	PUT_MODE
 	FORMAT_MODE
 	INFO_MODE
+	DELETE_MODE
 )
 
 type insertTarget int
@@ -64,6 +65,8 @@ func processTermboxEvents(s *sheet.Sheet) {
 				display.DisplayValue("Yank row/column:  r: row  c: column", 0, 0, 80, align.AlignLeft, false)
 			case PUT_MODE:
 				display.DisplayValue("Put row/column:  r: row  c: column", 0, 0, 80, align.AlignLeft, false)
+			case DELETE_MODE:
+				display.DisplayValue("Delete row/column:  r: row  c: column", 0, 0, 80, align.AlignLeft, false)
 			case INFO_MODE:
 				display.DisplayValue(info, 0, 0, 80, align.AlignLeft, false)
 			}
@@ -73,7 +76,7 @@ func processTermboxEvents(s *sheet.Sheet) {
 
 	// Events
 	for {
-		ev := termbox.PollEvent() 
+		ev := termbox.PollEvent()
 
 		if ev.Type == termbox.EventError {
 			smode = INFO_MODE
@@ -97,6 +100,8 @@ func processTermboxEvents(s *sheet.Sheet) {
 				smode = NORMAL_MODE
 			case 0:
 				switch ev.Ch {
+				case 'd':
+					smode = DELETE_MODE
 				case 'q':
 					smode = EXIT_MODE
 				case '=', 'i':
@@ -212,6 +217,17 @@ func processTermboxEvents(s *sheet.Sheet) {
 				s.PutColumn()
 			}
 			smode = NORMAL_MODE
+
+		case DELETE_MODE:
+			if ev.Key == 0 && ev.Ch == 'r' {
+				row, _ := s.SelectedCell.RowCol()
+				s.DeleteRow(row)
+			} else if ev.Key == 0 && ev.Ch == 'c' {
+				_, col := s.SelectedCell.RowCol()
+				s.DeleteColumn(col)
+			}
+			smode = NORMAL_MODE
+
 		case FORMAT_MODE:
 			switch ev.Key {
 			case termbox.KeyEsc, termbox.KeyEnter:
