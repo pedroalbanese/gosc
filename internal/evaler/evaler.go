@@ -28,8 +28,7 @@ var RangeExpander func(rng string) []string
 // ErrRef is returned when a formula references @ERR directly.
 var ErrRef = fmt.Errorf("error reference")
 
-// ErrInvalid is returned when a formula is invalid for other reasons
-// (e.g., division by zero, or @ERR used as an argument to a function).
+// ErrInvalid is returned when a formula is invalid for other reasons.
 var ErrInvalid = fmt.Errorf("invalid expression")
 
 // prec returns the operator's precedence
@@ -222,7 +221,6 @@ func EvaluatePostfix(postfix []string) (*big.Rat, error) {
 		}
 
 		if token == "@ERR" {
-			// Check if we are inside a function (there's a "<fn>" marker on the stack).
 			insideFn := false
 			for _, v := range stack {
 				if v.single == nil && v.list == nil {
