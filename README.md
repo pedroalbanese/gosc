@@ -26,16 +26,21 @@ This release adds support for cell ranges (A1:A7).
 * Enter insert mode for numbers and expressions: =, i
 * Enter insert mode for strings with alignment: < (Left-Aligned), > (Right-Aligned), \ (Centered)
 * Delete (clear) cell: x
+* Delete row: d, r
+* Delete column: d, c
 * Commands: (y)ank, (p)ut
 * Set output format for current column: f
 * Export in txt: W
 * Goto: g
 * Undo: u
 * Quit: q
+
 ## Bug Fixes and Improvements
 
 ### Added
 - **Cell ranges:** support for ranges such as `A1:A7` in formulas (e.g., `A1:A7*2`, `B1:B3+C1:C3`).
+- **Functions:** `@sum`, `@avg`, `@max` and `@min` now work with cell ranges (e.g., `@avg(B1:D1)`, `@max(A1:A7)`).
+- **Delete row/column:** press `d` followed by `r` (row) or `c` (column) to delete the current row or column. Formulas are adjusted automatically: references to the deleted row/column become `@ERR`, references to rows/columns to the right are decremented, and ranges are shrunk accordingly.
 - **Undo:** press `u` to revert the most recent cell change (single-level undo).
 - **GoTo:** press `g`, type an address (e.g., `C5`), and press Enter to jump directly to that cell.
 
@@ -47,6 +52,7 @@ This release adds support for cell ranges (A1:A7).
 | Slow `GoTo` (cell by cell) | Instant `GoTo` |
 | Slow opening (48 redraws) | Fast opening (1 redraw) |
 | `@avg`, `@max`, `@min` returning the range sum | `@avg`, `@max`, `@min` returning the correct aggregate value |
+| Formulas not adjusted when deleting rows/columns | Formulas are rewritten: references to the deleted row/column become `@ERR`, and other references are shifted |
 
 ## Contribute
 **Use issues for everything**
