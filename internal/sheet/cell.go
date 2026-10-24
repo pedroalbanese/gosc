@@ -53,6 +53,14 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	if c.calculating {
 		return "circle"
 	}
+
+	// Empty cell: return empty string, not "0.00".
+	if c.value == "" {
+		c.cachedValue = ""
+		c.cacheValid = true
+		return ""
+	}
+
 	c.calculating = true
 	defer func() { c.calculating = false }()
 
@@ -62,6 +70,16 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	defer func() { currentSheet = prevSheet }()
 
 	postfix := evaler.GetPostfix(c.value)
+
+	// Check if the postfix contains @ERR. If it does, skip propagation
+	// (the @ERR will be handled by EvaluatePostfix, returning ErrRef).
+	hasErr := false
+	for _, token := range postfix {
+		if token == "@ERR" {
+			hasErr = true
+			break
+		}
+	}
 
 	// Substitute cell addresses with their values. Ranges are left as
 	// tokens; the evaler expands them via RangeExpander.
@@ -75,7 +93,19 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 					c.cacheValid = true
 					return "circle"
 				}
-				if v != "" {
+				if !hasErr {
+					if v == "ERROR" {
+						c.cachedValue = "INVALID"
+						c.cacheValid = true
+						return "INVALID"
+					}
+					if v == "INVALID" {
+						c.cachedValue = "INVALID"
+						c.cacheValid = true
+						return "INVALID"
+					}
+				}
+				if v != "" && v != "ERROR" && v != "INVALID" {
 					refCellVal = v
 				}
 			}
@@ -86,6 +116,10 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 	result := ""
 	if rat, err := evaler.EvaluatePostfix(postfix); err == nil {
 		result = rat.FloatString(s.getPrecision(address))
+	} else if err == evaler.ErrRef {
+		result = "ERROR"
+	} else {
+		result = "INVALID"
 	}
 	c.cachedValue = result
 	c.cacheValid = true
@@ -93,7 +127,7 @@ func (c *Cell) getDisplayValue(s *Sheet, address Address) string {
 }
 
 // expandRangeList expands a range like A1:B3 into a list of cell values.
-// This is used by the evaler's RangeExpander.
+// Used by the evaler's RangeExpander.
 func (s *Sheet) expandRangeList(rng string) []string {
 	parts := strings.SplitN(rng, ":", 2)
 	if len(parts) != 2 {
